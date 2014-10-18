@@ -1,4 +1,4 @@
-smyt
+SMYT test application
 ====
 
-SMYT test
+

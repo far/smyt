@@ -1,0 +1,307 @@
+<html>
+<head>
+<script src="http://code.jquery.com/jquery-1.10.2.js"></script>
+<!-- jquery плагин Pikaday (date пикер) -->
+<link rel="stylesheet" href="http://dbushell.github.io/Pikaday/css/pikaday.css"/>
+<!-- библиотека Momento для форматирования дат -->
+<script src="http://momentjs.com/downloads/moment.min.js"></script>
+<script src="http://dbushell.github.io/Pikaday/pikaday.js"></script>
+<script src="http://dbushell.github.io/Pikaday/plugins/pikaday.jquery.js"></script>
+
+<style>
+.err {
+    color:red;
+}
+.date-cell { 
+    border: 0px;
+    width:100%;
+    display:block; 
+    text-align:center;
+    padding:0;
+    margin:0;
+}
+#divform_new_obj {
+    display: none;
+    background-color:silver;
+    border: 1px solid #c4c4c4;
+    padding: 10px;
+}
+th {
+    font-weight:bold;
+    background-color:#c4c4c4;
+}
+td {
+    background-color:#FFF;
+    font-family:monospace;
+}
+</style>
+<script>
+
+// Предельные значения поля типа int
+var maxInt = {{ maxint }};
+if( maxInt > Number.MAX_VALUE ) { maxInt = Number.MAX_VALUE; }
+var minInt = (-1)*maxInt - 1;
+// Объект конфигурации моделей 
+var cfgData = null;
+// Текущая выбранная модель
+var currentModel = null;
+// Регулярка для проверки int значений
+var intRegex = /^\-?\d+$/;
+
+var tmpDate = null;
+var dateSelected = false;
+
+// Отправка формы создания нового объекта модели
+var submitForm = function(e) {
+    $('.err').hide();
+    var valid = true;
+    for (var k=0; k < cfgData[currentModel]['fields'].length; k++) {
+        var field_id = cfgData[currentModel]['fields'][k]['id'];
+        if( !cellIsValid(cfgData[currentModel]['fields'][k]['type'], $('#newobj_'+field_id).val()) ) {
+            valid = false;
+            $('#newobj_'+field_id+'_err').show(); 
+        }    
+    }
+    if( valid ) {
+        $.ajax({
+            type: 'POST',
+            url: '/obj_create/'+currentModel+'/',
+            data: $("#new_obj_form").serialize(),
+            success: function(data) {
+                console.log('new id:'+data);
+                $("#new_obj_form")[0].reset();
+                loadModels(currentModel);
+            },        
+            // Ошибка запроса
+            error: function(data) {
+                alert('Ошибка создания нового объекта модели ' + currentModel);
+            }
+        });
+    }
+}
+
+// Генерация формы создания нового объекта модели
+var drawForm = function(model) { 
+    formData = '<center><b>Создать новый объект</b></center><form id="new_obj_form" action="/obj_create/'+model+'/" method="post">';
+    for (var k=0; k < cfgData[model]['fields'].length; k++) {
+        var field_id = cfgData[model]['fields'][k]['id'];
+        var field_type = cfgData[model]['fields'][k]['type']
+        if ( field_type == 'date' ) {   
+            formData += '<BR>'+cfgData[model]['fields'][k]['title']+':<input class="date-picker" id="newobj_'+field_id+'" type="text" name="'+field_id+'" value="">';
+        } else if ( field_type == 'int' ) {
+            formData += '<BR>'+cfgData[model]['fields'][k]['title']+':<input id="newobj_'+field_id+'" type="text" name="'+field_id+'" value="">';
+            formData += '<label class="err" id="newobj_'+field_id+'_err" style="display: none">Введите числовое значение</label>';
+        } else {
+            formData += '<BR>'+cfgData[model]['fields'][k]['title']+':<input id="newobj_'+field_id+'" type="text" name="'+field_id+'" value="">';
+        }
+    }
+    formData += '<BR><BR>'+"{% csrf_token %}"+'<input type="button" value="Создать" onClick="submitForm()"></form>';
+    console.log(formData);
+    return formData;
+}
+
+// Определение типа измененной ячейки таблицы 
+var getClickedType = function(cell) {
+    var col = cell.parent().children().index(cell);
+    return cfgData[currentModel]['fields'][col-1]['type'];
+}
+
+// Отправка изменений 
+var updateCell = function(cell, oldValue) {
+    var col = cell.parent().children().index(cell);
+    var objid = cell.parent().children('td:first').text();
+    var field = cfgData[currentModel]['fields'][col-1]['id'];
+    var type = cfgData[currentModel]['fields'][col-1]['type'];
+    var value = '';
+    if( type == 'date' ) {
+        value = cell.children()[0].value;
+    } else {
+        value = cell.text();
+    }
+    //console.log('ID:'+objid+' Field:'+field+' Value:'+value);
+
+    // Обновление поля объекта
+    $.ajax({
+        type: 'POST',
+        url: '/obj_update/'+currentModel+'/',
+        data: {
+            objid: objid,
+            field: field,
+            value: value,
+            csrfmiddlewaretoken: '{{ csrf_token }}'
+        },
+        success: function(data) {
+        },
+        // Ошибка запроса
+        error: function(data) {
+            //alert('Ошибка обновления модели '+model+ ' ID: '+objid);
+            cell.html(oldValue);
+            cell.focus();
+        }
+    });
+}
+
+var validateInt = function(v) {
+    var x = parseInt(v);
+    return (intRegex.test(v) && (x <= maxInt) && (x >= minInt));
+}
+
+var cellIsValid = function(cType, cData) {
+    if( cType == 'int' ) {
+        return validateInt(cData);
+    } else { return true };
+}
+
+// Проверка изменения контента редактируемых полей
+var checkOnChange = function() {
+    $('body')
+        .on('focus', '[contenteditable]', function() {
+            $(this).data('before', $(this).html());
+        })
+        .on('blur', '[contenteditable]', function() {
+            // изменение произошло
+            if ($(this).data('before') !== $(this).html()) {
+                var cellType = getClickedType($(this));
+                if( cellIsValid(cellType, $(this).html()) ) {
+                    updateCell($(this), $(this).data('before'));
+                    //$(this).css('background-color', 'white');
+                    //ajax update
+                } else {
+                    //$(this).css('background-color', 'red');
+                    $(this).html($(this).data('before'));
+                    $(this).focus();
+                }
+            } else {
+                //$(this).css('background-color', 'white');
+            }
+        });
+}
+
+// Загрузка объектов(json) 
+// @param model: ID модели (string)
+var loadModels = function(model) {
+    $('#tabcontent').html("");
+    $("#divform_new_obj").html("");
+    currentModel = model;
+    $.ajax({
+        type: "GET",
+        url: "/json_obj/"+model,
+
+        // Генерация таблицы с данными в случае успешного ответа от сервера
+        success: function(data) {
+    
+            if( data.length == 0 ) {
+                $('#tabcontent').hide();
+            } else {
+                $('#tabcontent').show();
+            }
+
+            var tabHeader = '<thead><tr><th><b>ID</b></th>';
+            for (var i=0; i < cfgData[model]['fields'].length; i++) {
+                tabHeader += '<th>'+cfgData[model]['fields'][i]['title']+'</th>';
+            }
+            tabHeader += '</tr></thead>';
+            
+            var tabBody = '<tbody>';
+            for (var i=0; i < data.length; i++) {
+                tabBody += '<tr><td>'+data[i]['pk']+'</td>';
+                for (var k=0; k < cfgData[model]['fields'].length; k++) {
+                    if(cfgData[model]['fields'][k]['type'] != 'date') {
+                        tabBody += '<td contenteditable="true">'+data[i]['fields'][cfgData[model]['fields'][k]['id']]+'</td>';
+                    } else {
+                        tabBody += '<td><input id="'+data[i]['pk']+'_'+k+'" class="date-picker date-cell" value="'+data[i]['fields'][cfgData[model]['fields'][k]['id']]+'"></td>';
+                    }
+                }
+                tabBody +='</tr>';
+            }
+            tabBody += '</tbody>';
+            // обновляем содержимое таблицы
+            $('#tabcontent').html(tabHeader+tabBody);            
+            $("#divform_new_obj").html(drawForm(model));
+            $("#divform_new_obj").css('display', 'inline-block');
+            // блокируем изменение ячейки с датой
+            $('.date-picker').keydown(function(){return false;});
+            $('.date-picker').bind("cut paste", function(e){ e.preventDefault(); });
+            // инициализируем пикер дат на ячейках с датой
+            var $datepicker = $('.date-picker').pikaday({
+                format: 'YYYY-MM-DD',
+                onOpen: function() {
+                    tmpDate = this.getMoment().format('YYYY-MM-DD');
+                    dateSelected = false
+                },
+                onSelect: function() {
+                    dateSelected = true
+                },
+                onClose: function() {
+                    // значение поля с типом 'date' было изменено 
+                    if(dateSelected && tmpDate !== this.getMoment().format('YYYY-MM-DD')) {
+                        var id = this._o.field.getAttribute('id');
+                        if(id.substr(0,3) !== 'new') {
+                            updateCell($('#'+id).parent(), tmpDate);
+                        }
+                    }
+                }
+            });
+        },
+        // Ошибка запроса
+        error: function(data) {
+            alert('Ошибка загрузки объектов модели '+model);
+        }
+    });        
+}
+
+// Загрузка конфигурации моделей(json) и первичная генерация меню
+$( document ).ready(function() {
+
+    checkOnChange();
+    $.ajax({
+        type: "GET",
+        url: "/json_cls/",
+        // Запрос выполнен без ошибок
+        success: function(data) {
+            cfgData = data;
+            var modList = $('<ul/>');
+
+            for(model in data) {
+                var li = $('<li/>')
+                    .appendTo(modList);
+                var a = $('<a/>')
+                    .text(data[model]['title'])
+                    .attr("id", model)
+                    .attr("href", "#")
+                    .appendTo(li);
+            }
+            $('#menu').html(modList.html());
+            $('a').click(function() {
+                loadModels($(this).attr('id'));
+            });
+        },
+        // Ошибка запроса
+        error: function(data) {
+            alert('Ошибка загрузки конфигурации моделей');
+        }
+
+    });
+
+});
+
+</script>
+<style>
+</style>
+</head>
+<body>
+<table>
+<tr>
+    <td valign="top">
+        <div id="menu"></div>
+    </td>
+    <td>
+        <table id="tabcontent" cellpadding="2" cellspacing="1" style="background-color:black;">
+        </table>
+        <br>
+        <div id="divform_new_obj">
+        </div>
+    </td>
+</tr>
+<table>
+</body>
